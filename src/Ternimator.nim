@@ -366,7 +366,7 @@ when isMainModule:
     echo "[?] Drop kern exec for a go at system? [y/n]"
     var k = readLine(stdin)[0]
 
-    echo "[?] Use NtLoadDriver? (otherwise use sc manager) [y?n]"
+    echo "[?] Use NtLoadDriver? (otherwise use sc manager) [y/n]"
     var nt = readLine(stdin)[0]
 
     # write vuln driver to disk
