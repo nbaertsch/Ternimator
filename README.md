@@ -8,12 +8,14 @@ nimble build
 <br>
 Cleanup currently does not work for either the service or the NtLoadDriver methods...
 <br>
+
 Manualy cleanup the service:
 ```
 sc stop zTerm
 sc delete zTerm
 ```
 <br>
+
 Manualy cleanup the NtLoadDriver:
 ```
 Restart the system lol
