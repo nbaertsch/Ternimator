@@ -6,14 +6,6 @@
 
 ]#
 
-#[
-    A port of the Terminator project to nim.
-    
-    Refference:
-        https://github.com/ZeroMemoryEx/Terminator/blob/master/Terminator/Terminator.cpp
-
-]#
-
 import winim/inc/[windef, winbase, tlhelp32, winsvc, winerror, winreg]
 import winim/winstr
 import unicode, strutils, strformat
